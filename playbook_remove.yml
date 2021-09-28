@@ -1,0 +1,22 @@
+---
+- hosts: all
+  become: true
+  tasks:
+      
+      - name: remove web
+        docker_container:
+          name: nginx_test
+          state: absent
+
+      - name: remove sql
+        docker_container:
+          name: sql_test
+          state: absent
+
+      - name: remove php
+        docker_container:
+          name: php_test
+          state: absent
+
+
+

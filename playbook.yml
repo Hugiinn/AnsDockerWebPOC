@@ -1,0 +1,103 @@
+---
+- hosts: all
+  become: true
+  vars:
+    docker_network: ansible_net
+
+  tasks:
+      
+    - name: Install required system packages
+      apt: name={{ item }} state=latest update_cache=yes
+      loop: [ 'python-is-python3', 'ca-certificates', 'curl', 'software-properties-common', 'python3-pip', 'virtualenv', 'python3-setuptools']
+
+    - name: "Create a network"
+      docker_network:
+        name: "{{ docker_network }}"
+
+    - name: Ensure dir exists for html file
+      file:
+        path: /home/static/webpage
+        state: directory
+
+    - name: Copy html file
+      copy:
+        dest: "/home/static/webpage/index.php"
+        src: "index.php"
+
+    - name: Ensure dir exists for sql file
+      file:
+        path: /home/static/sql
+        state: directory
+
+    - name: Copy sql file
+      copy:
+        dest: "/home/static/sql/"
+        src: "script.sql"
+
+    - name: Ensure dir exists for conf file
+      file:
+        dest: /home/static/conf
+        state: directory
+
+    - name: Copy site.conf
+      copy:
+        dest: "/home/static/conf/site.conf"
+        src: "site.conf"
+
+    - name: Create sql container
+      docker_container:
+        pull: yes
+        name: sql_test
+        image: mysql:5.7
+        networks:
+          - name: "{{ docker_network }}"
+        env:
+          MYSQL_ROOT_PASSWORD: "test"
+          MYSQL_DATABASE: "phptest"
+        volumes:
+          - db_data:/data/mysql
+      register: sql 
+
+    - name: Create PHP container
+      docker_container:
+        pull: yes
+        name: php_test
+        image: php:7.2-fpm
+        networks:
+          - name: "{{ docker_network }}"
+        volumes:
+          - /home/static/webpage/:/var/www/myapp/
+      register: php
+
+    - name: Install mysqli on php container
+      ansible.builtin.shell:
+        cmd: docker exec -it php_test /usr/local/bin/docker-php-ext-install mysqli
+      when: php.changed
+
+    - name: Kill PHP in docker container to have mysqli function properly
+      ansible.builtin.shell:
+        cmd: docker exec -it php_test /bin/bash -c "kill -USR2 1"
+      when: php.changed
+
+    - name: Create web container
+      docker_container:
+        pull: yes
+        name: nginx_test
+        image: nginx
+        networks:
+          - name: "{{ docker_network }}"
+        ports:
+          - "8080:80"
+        volumes:
+          - /home/static/webpage/:/var/www/myapp/
+          - /home/static/conf/:/etc/nginx/conf.d/
+
+    - name: Sleep for 300 seconds and continue with play. Ensures SQL database is up and running.
+      wait_for:
+        timeout: 300
+      when: sql.changed
+     
+    - name: Run sql script
+      ansible.builtin.shell:
+        cmd: docker exec -i sql_test mysql -u root --password="test" phptest < /home/static/sql/script.sql
+      when: sql.changed
